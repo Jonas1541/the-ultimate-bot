@@ -5,14 +5,14 @@
 #property copyright "TheUltimateBot"
 #property strict
 
-#include "../Domain/ICommand.mqh"
+#include <TheUltimateBot/Domain/ICommand.mqh>
+#include <TheUltimateBot/Infrastructure/MT5Bridge.mqh> 
 
 class OpenOrderCommand : public ICommand {
 private:
-   MqlTradeRequest m_request; // Struct nativa do MT5 que guarda os dados da ordem
+   MqlTradeRequest m_request; 
 
 public:
-   // --- Construtor: A estratégia preenche isso ---
    OpenOrderCommand(string symbol, ENUM_ORDER_TYPE type, double volume, double price, double sl, double tp, string comment) {
       ZeroMemory(m_request);
       
@@ -24,21 +24,20 @@ public:
       m_request.sl = sl;
       m_request.tp = tp;
       m_request.comment = comment;
-      m_request.type_filling = ORDER_FILLING_FOK; // Fill or Kill (B3 padrão)
+      
+      // Importante para B3: Preenchimento
+      m_request.type_filling = ORDER_FILLING_RETURN; 
    }
 
-   // --- Execução ---
    void Execute() override {
-      // Futuro: Aqui chamaremos this.bridge.SendOrder(m_request);
-      // Por enquanto, apenas logamos a intenção
-      PrintFormat(">>> COMMAND EXEC: %s %s Vol: %.2f Price: %.2f SL: %.2f TP: %.2f",
-         (m_request.type == ORDER_TYPE_BUY ? "BUY" : "SELL"),
-         m_request.symbol,
-         m_request.volume,
-         m_request.price,
-         m_request.sl,
-         m_request.tp
-      );
+      // Struct para receber a resposta da corretora
+      MqlTradeResult result;
+      ZeroMemory(result);
+
+      PrintFormat(">>> [CMD] Enviando ordem %s...", m_request.symbol);
+
+      // Chamamos o Singleton da Bridge para disparar a ordem
+      MT5Bridge::Get().SendRawRequest(m_request, result);
    }
 };
 //+------------------------------------------------------------------+
