@@ -7,7 +7,11 @@
 
 #include <TheUltimateBot/Domain/ISignal.mqh>
 #include <TheUltimateBot/Domain/Types.mqh>
+#include <TheUltimateBot/Domain/IMoney.mqh>
 #include <TheUltimateBot/Commands/OpenOrderCommand.mqh>
+#include <TheUltimateBot/Infrastructure/PositionService.mqh>
+
+// Nota: Não precisamos mais incluir TimeFilter aqui!
 
 class MovingAvgCross : public ISignal {
 private:
@@ -16,17 +20,18 @@ private:
    string   m_symbol;
    double   m_buffFast[]; 
    double   m_buffSlow[];
+   
+   IMoney* m_money; 
+   // Removemos m_time daqui. Ele agora vive dentro da lista m_validators da classe pai.
 
-   // CORREÇÃO 1: Helper para pegar o valor do Point de forma segura
-   double GetPoint() {
-      return SymbolInfoDouble(m_symbol, SYMBOL_POINT);
-   }
+   double GetPoint() { return SymbolInfoDouble(m_symbol, SYMBOL_POINT); }
 
 public:
-   MovingAvgCross(string symbol, ENUM_TIMEFRAMES period, int fastPeriod, int slowPeriod) {
+   // CONSTRUTOR MAIS LIMPO
+   MovingAvgCross(string symbol, ENUM_TIMEFRAMES period, int fastPeriod, int slowPeriod, IMoney* money) {
       m_symbol = symbol;
+      m_money = money;
       
-      // Inicializa médias móveis (SMA no fechamento)
       m_handleFast = iMA(symbol, period, fastPeriod, 0, MODE_SMA, PRICE_CLOSE);
       m_handleSlow = iMA(symbol, period, slowPeriod, 0, MODE_SMA, PRICE_CLOSE);
       
@@ -39,18 +44,31 @@ public:
       IndicatorRelease(m_handleSlow);
    }
 
-   string GetName() override {
-      return "Moving Average Crossover";
-   }
+   string GetName() override { return "Moving Average Crossover"; }
 
    double GetScore(MarketState &state) override {
-      // Verifica se os Enums estão acessíveis via Types.mqh
+      // 1. RODAR FILTROS (Horário, Loss, Spread, etc.)
+      string reason = "";
+      if(!ValidateAll(reason)) {
+         // Opcional: Print("Bloqueado por: " + reason);
+         return 0.0;
+      }
+
+      // 2. Filtro de Posição (ainda hardcoded por ser crítico de infra)
+      if(PositionService::Get().HasOpenPosition(m_symbol)) return 0.0; 
+
+      // 3. Filtro de Tendência
       if(state.trend == TREND_NEUTRAL) return 0.1; 
-      if(state.volatility == VOL_EXTREME) return 0.0;
+      
       return 0.9; 
    }
 
    ICommand* Tick(MarketState &state) override {
+      // Redundância de segurança
+      string ignore;
+      if(!ValidateAll(ignore)) return NULL;
+      if(PositionService::Get().HasOpenPosition(m_symbol)) return NULL;
+
       if(CopyBuffer(m_handleFast, 0, 0, 3, m_buffFast) < 3) return NULL;
       if(CopyBuffer(m_handleSlow, 0, 0, 3, m_buffSlow) < 3) return NULL;
 
@@ -58,34 +76,24 @@ public:
       double slowNow = m_buffSlow[1];
       double fastPrev = m_buffFast[2];
       double slowPrev = m_buffSlow[2];
-
-      // CORREÇÃO 2: Uso de GetPoint() no lugar de _Point
       double pt = GetPoint(); 
 
-      // Cruzamento de COMPRA
+      // COMPRA
       if(fastPrev <= slowPrev && fastNow > slowNow) {
-         return new OpenOrderCommand(
-            m_symbol, 
-            ORDER_TYPE_BUY, 
-            1.0,           
-            state.ask,     
-            state.ask - 100 * pt, // Stop Loss corrigido
-            state.ask + 200 * pt, // Take Profit corrigido
-            "MACross Buy"
-         );
+         double sl = state.ask - 100 * pt;
+         double tp = state.ask + 200 * pt;
+         double lots = m_money.GetLotSize(state.ask, sl);
+
+         return new OpenOrderCommand(m_symbol, ORDER_TYPE_BUY, lots, state.ask, sl, tp, "MACross Buy");
       }
 
-      // Cruzamento de VENDA
+      // VENDA
       if(fastPrev >= slowPrev && fastNow < slowNow) {
-         return new OpenOrderCommand(
-            m_symbol, 
-            ORDER_TYPE_SELL, 
-            1.0, 
-            state.bid,
-            state.bid + 100 * pt,
-            state.bid - 200 * pt,
-            "MACross Sell"
-         );
+         double sl = state.bid + 100 * pt;
+         double tp = state.bid - 200 * pt;
+         double lots = m_money.GetLotSize(state.bid, sl);
+
+         return new OpenOrderCommand(m_symbol, ORDER_TYPE_SELL, lots, state.bid, sl, tp, "MACross Sell");
       }
 
       return NULL;
