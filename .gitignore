@@ -1,0 +1,19 @@
+# 1. IGNORE TUDO POR PADRÃO
+/*
+
+# 2. NÃO IGNORE arquivos de configuração do Git
+!/.gitignore
+!/README.md
+
+# 3. PERMITA APENAS suas pastas específicas
+!/Experts/
+/Experts/*
+!/Experts/TheUltimateBot/
+
+!/Include/
+/Include/*
+!/Include/TheUltimateBot/
+
+# 4. IGNORE binários mesmo dentro das pastas permitidas
+*.ex5
+*.log
