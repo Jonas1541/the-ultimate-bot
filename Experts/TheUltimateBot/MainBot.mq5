@@ -12,11 +12,13 @@
 
 // --- IMPORTS DE OPERAÇÃO E SERVIÇOS ---
 #include <TheUltimateBot/Operations/Trend/MovingAvgCross.mqh>
-#include <TheUltimateBot/Operations/Range/BollingerFade.mqh> // <--- NOVO
+#include <TheUltimateBot/Operations/Range/BollingerFade.mqh>
 #include <TheUltimateBot/Services/Risk/ConservativeRisk.mqh>
 #include <TheUltimateBot/Services/Time/TimeFilter.mqh>
 #include <TheUltimateBot/Validators/DailyLossValidator.mqh>
 #include <TheUltimateBot/Validators/TradingHoursValidator.mqh>
+
+#include <TheUltimateBot/UI/Dashboard.mqh>
 
 // --- INPUTS: ESTRATÉGIA 1 (TENDÊNCIA) ---
 input group    "Estratégia: Médias Móveis (Tendência)"
@@ -45,6 +47,7 @@ input int      Inp_EndMin     = 30;         // Minuto Fim
 
 // --- OBJETOS GLOBAIS ---
 Kernel *g_kernel;
+Dashboard *g_dashboard; // <--- Variável Global da UI
 
 //+------------------------------------------------------------------+
 //| Expert initialization function (BOOTSTRAP)                       |
@@ -107,6 +110,12 @@ int OnInit()
    g_kernel.GetManager().Register(strategyTrend);
    g_kernel.GetManager().Register(strategyRange);
 
+   // --- INICIALIZA A UI ---
+   // Passamos o Kernel para que o Dashboard possa ler o lucro e status
+   g_dashboard = new Dashboard(g_kernel);
+
+   Print(">>> [BOOT] UI Dashboard Initialized.");
+
    PrintFormat(">>> [BOOT] Config: Risk=%.1f%% | DailyLimit=$%.2f | Strategies Loaded: 2", 
                Inp_RiskPercent, Inp_DailyLoss);
    
@@ -123,6 +132,9 @@ void OnDeinit(const int reason)
    
    // O Destrutor do Kernel limpa Manager, Session e Strategies registradas
    if(CheckPointer(g_kernel) == POINTER_DYNAMIC) delete g_kernel;
+
+   // LIMPA A UI (Remove os textos da tela)
+   if(CheckPointer(g_dashboard) == POINTER_DYNAMIC) delete g_dashboard;
    
    // Nota sobre vazamento de memória em testes:
    // Objetos como 'moneyService' e validadores que foram passados como ponteiros
@@ -136,8 +148,14 @@ void OnDeinit(const int reason)
 void OnTick()
   {
    // Simplesmente repassa o pulso para o Kernel processar a decisão
+   // 1. Processamento Lógico (Cérebro)
    if(g_kernel != NULL) {
       g_kernel.OnTick();
+   }
+
+   // 2. Processamento Visual (Olhos)
+   if(g_dashboard != NULL) {
+      g_dashboard.Update();
    }
   }
 //+------------------------------------------------------------------+
