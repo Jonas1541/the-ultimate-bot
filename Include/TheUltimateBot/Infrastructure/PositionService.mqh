@@ -59,6 +59,21 @@ public:
       }
       return (ENUM_POSITION_TYPE)-1; 
    }
+
+   // Preenche um array com os tickets abertos deste robô
+   void GetOpenTickets(ulong &tickets[]) {
+      ArrayResize(tickets, 0); 
+      
+      for(int i = PositionsTotal() - 1; i >= 0; i--) {
+         if(m_position.SelectByIndex(i)) {
+            if(m_position.Magic() == m_magicNumber) { // Filtra apenas as nossas
+               int size = ArraySize(tickets);
+               ArrayResize(tickets, size + 1);
+               tickets[size] = m_position.Ticket();
+            }
+         }
+      }
+   }
 };
 
 PositionService *PositionService::s_instance = NULL;

@@ -7,7 +7,11 @@
 
 #include "../Domain/ISignal.mqh"
 #include "../Domain/MarketState.mqh"
+#include "../Domain/MarketState.mqh"
+#include "../Commands/ClosePositionCommand.mqh" // <--- Novo Include
+#include "../Infrastructure/PositionService.mqh" // <--- Para listar posições
 #include "CommandInvoker.mqh"
+
 
 class StrategyManager {
 private:
@@ -41,33 +45,42 @@ public:
       ISignal* bestStrategy = NULL;
       double bestScore = -1.0;
 
-      // 1. RODADA DE QUALIFICAÇÃO (Ranking)
-      // Pergunta a nota para todos, mas não executa nada ainda.
       for(int i=0; i<total; i++) {
          double score = m_strategies[i].GetScore(state);
-         
-         // Debug para vermos a competição no log
-         // PrintFormat("Strat: %s | Score: %.2f", m_strategies[i].GetName(), score);
-
          if(score > bestScore) {
             bestScore = score;
             bestStrategy = m_strategies[i];
          }
       }
 
-      // 2. RODADA DE EXECUÇÃO (Winner Takes All)
-      // Apenas a melhor estratégia do momento ganha o direito de analisar o tick
-      // Definimos um piso mínimo (ex: 0.5) para evitar operar em confusão total
       if(bestStrategy != NULL && bestScore >= 0.5) {
-         
-         // Só agora chamamos o Tick() da vencedora
+         // --- AQUI GERAMOS O COMANDO ---
          ICommand* command = bestStrategy.Tick(state);
          
          if(command != NULL) {
-            PrintFormat(">>> [MANAGER] WINNER: %s (Score: %.2f) -> Executing...", 
+            // LOG NO DIÁRIO (Aparece na aba Diário)
+            PrintFormat(">>> [TRADE] Strategy '%s' (Score %.2f) TRIGGERED COMMAND", 
                         bestStrategy.GetName(), bestScore);
+            
             m_invoker.Execute(command);
          }
+      }
+   }
+
+   // --- MODO PÂNICO ---
+   void PanicCloseAll() {
+      Print(">>> [STRATEGY MANAGER] !!! EXECUTING PANIC CLOSE ALL !!!");
+      
+      ulong tickets[];
+      PositionService::Get().GetOpenTickets(tickets);
+      
+      int total = ArraySize(tickets);
+      PrintFormat(">>> [PANIC] Found %d open positions to close.", total);
+      
+      for(int i=0; i<total; i++) {
+         // Cria e executa imediatamente o comando de fechamento
+         ICommand* cmd = new ClosePositionCommand(tickets[i]);
+         m_invoker.Execute(cmd);
       }
    }
 };

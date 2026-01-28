@@ -5,30 +5,25 @@
 //+------------------------------------------------------------------+
 #property copyright "TheUltimateBot"
 #property link      "https://www.yourdomain.com"
-#property version   "1.02" // Atualizado para incluir Bollinger
+#property version   "1.04" // UI Scaling + Panic Button + Logging
 
 // --- IMPORTS DO NÚCLEO (CORE) ---
 #include <TheUltimateBot/Core/Kernel.mqh>
 
-// --- IMPORTS DE OPERAÇÃO E SERVIÇOS ---
-#include <TheUltimateBot/Operations/Trend/MovingAvgCross.mqh>
-#include <TheUltimateBot/Operations/Range/BollingerFade.mqh>
+// --- IMPORTS DE SERVIÇOS E VALIDADORES ---
 #include <TheUltimateBot/Services/Risk/ConservativeRisk.mqh>
 #include <TheUltimateBot/Services/Time/TimeFilter.mqh>
 #include <TheUltimateBot/Validators/DailyLossValidator.mqh>
 #include <TheUltimateBot/Validators/TradingHoursValidator.mqh>
-
 #include <TheUltimateBot/UI/Dashboard.mqh>
 
-// --- INPUTS: ESTRATÉGIA 1 (TENDÊNCIA) ---
-input group    "Estratégia: Médias Móveis (Tendência)"
-input int      Inp_FastMA     = 9;          // Média Rápida
-input int      Inp_SlowMA     = 21;         // Média Lenta
+// --- IMPORTS DE ESTRATÉGIAS ---
+// Usando a Híbrida (Cerberus) para garantir compatibilidade com Wine/Linux
+#include <TheUltimateBot/Operations/Hybrid/CerberusStrategy.mqh>
 
-// --- INPUTS: ESTRATÉGIA 2 (LATERALIDADE) ---
-input group    "Estratégia: Bollinger Bands (Lateral)"
-input int      Inp_BbPeriod   = 20;         // Período BB
-input double   Inp_BbDev      = 2.0;        // Desvio Padrão
+// --- INPUTS: INTERFACE GRÁFICA (NOVO) ---
+input group    "Interface Gráfica"
+input double   Inp_UIScale     = 1.2;       // Fator de Escala (1.0 = Padrão, 1.3 = Grande)
 
 // --- INPUTS: GERENCIAMENTO DE RISCO ---
 input group    "Gerenciamento de Risco"
@@ -47,7 +42,7 @@ input int      Inp_EndMin     = 30;         // Minuto Fim
 
 // --- OBJETOS GLOBAIS ---
 Kernel *g_kernel;
-Dashboard *g_dashboard; // <--- Variável Global da UI
+Dashboard *g_dashboard;
 
 //+------------------------------------------------------------------+
 //| Expert initialization function (BOOTSTRAP)                       |
@@ -59,67 +54,41 @@ int OnInit()
    // 1. INICIALIZA O KERNEL
    g_kernel = Kernel::Get();
 
-   // 2. CRIAÇÃO DOS SERVIÇOS AUXILIARES (DEPENDENCY INJECTION)
+   // 2. CRIAÇÃO DOS SERVIÇOS AUXILIARES
    IMoney* moneyService = new ConservativeRisk(_Symbol, Inp_RiskPercent);
    TimeFilter* timeService = new TimeFilter(Inp_StartHour, Inp_StartMin, Inp_EndHour, Inp_EndMin);
 
-   // 3. CRIAÇÃO DOS VALIDADORES (FILTROS COMPARTILHADOS)
-   // Estes filtros serão usados por TODAS as estratégias
-   
-   // A. Validador de Horário
+   // 3. CRIAÇÃO DOS VALIDADORES
    TradingHoursValidator* timeValidator = new TradingHoursValidator(timeService);
-
-   // B. Validador de Perda Diária (Segurança)
    SessionContext* session = g_kernel.GetSession();
    DailyLossValidator* lossValidator = new DailyLossValidator(session, Inp_DailyLoss);
 
    // ---------------------------------------------------------
-   // 4. CONFIGURAÇÃO DAS ESTRATÉGIAS
+   // 4. CONFIGURAÇÃO DA ESTRATÉGIA "CERBERUS"
    // ---------------------------------------------------------
-
-   // --- ESTRATÉGIA A: TENDÊNCIA (Moving Avg) ---
-   MovingAvgCross* strategyTrend = new MovingAvgCross(
-      _Symbol, 
-      PERIOD_M1, 
-      Inp_FastMA, 
-      Inp_SlowMA, 
-      moneyService
-   );
+   CerberusStrategy* cerberus = new CerberusStrategy(_Symbol);
+   
    // Injeção dos Filtros
-   strategyTrend.AddValidator(timeValidator);
-   strategyTrend.AddValidator(lossValidator);
-   
-   // --- ESTRATÉGIA B: LATERALIDADE (Bollinger) ---
-   BollingerFade* strategyRange = new BollingerFade(
-      _Symbol, 
-      PERIOD_M1, 
-      Inp_BbPeriod, 
-      Inp_BbDev, 
-      moneyService
-   );
-   // Injeção dos MESMOS Filtros (Reúso!)
-   strategyRange.AddValidator(timeValidator);
-   strategyRange.AddValidator(lossValidator);
+   cerberus.AddValidator(timeValidator);
+   cerberus.AddValidator(lossValidator);
 
    // ---------------------------------------------------------
-   // 5. REGISTRO NO CÉREBRO (KERNEL/MANAGER)
+   // 5. REGISTRO NO CÉREBRO
    // ---------------------------------------------------------
-   // Aqui nós apenas entregamos as opções.
-   // O StrategyManager decidirá a cada tick qual delas tem o maior Score.
+   g_kernel.GetManager().Register(cerberus);
+
+   // --- INICIALIZA A UI (AGORA COM ESCALA) ---
+   // Passamos o fator de escala definido no input
+   g_dashboard = new Dashboard(g_kernel, Inp_UIScale);
    
-   g_kernel.GetManager().Register(strategyTrend);
-   g_kernel.GetManager().Register(strategyRange);
-
-   // --- INICIALIZA A UI ---
-   // Passamos o Kernel para que o Dashboard possa ler o lucro e status
-   g_dashboard = new Dashboard(g_kernel);
-
-   Print(">>> [BOOT] UI Dashboard Initialized.");
-
-   PrintFormat(">>> [BOOT] Config: Risk=%.1f%% | DailyLimit=$%.2f | Strategies Loaded: 2", 
-               Inp_RiskPercent, Inp_DailyLoss);
+   // Força habilitação de cliques e eventos de objeto
+   ChartSetInteger(0, CHART_EVENT_OBJECT_CREATE, true);
+   ChartSetInteger(0, CHART_EVENT_OBJECT_DELETE, true);
+   ChartSetInteger(0, CHART_EVENT_MOUSE_MOVE, true); // Opcional, para debug
    
-   Print(">>> [BOOT] Kernel is ACTIVE. Waiting for ticks.");
+   PrintFormat(">>> [BOOT] Config: Risk=%.1f%% | UI Scale=%.1f | Strategy: Cerberus", 
+               Inp_RiskPercent, Inp_UIScale);
+   
    return(INIT_SUCCEEDED);
   }
 
@@ -130,16 +99,8 @@ void OnDeinit(const int reason)
   {
    Print(">>> [SHUTDOWN] System halted.");
    
-   // O Destrutor do Kernel limpa Manager, Session e Strategies registradas
    if(CheckPointer(g_kernel) == POINTER_DYNAMIC) delete g_kernel;
-
-   // LIMPA A UI (Remove os textos da tela)
    if(CheckPointer(g_dashboard) == POINTER_DYNAMIC) delete g_dashboard;
-   
-   // Nota sobre vazamento de memória em testes:
-   // Objetos como 'moneyService' e validadores que foram passados como ponteiros
-   // mas não têm ownership explícito podem ficar na memória até o terminal fechar.
-   // Em produção C++, usaríamos smart pointers. No MQL5, o SO limpa o processo.
   }
 
 //+------------------------------------------------------------------+
@@ -147,15 +108,73 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTick()
   {
-   // Simplesmente repassa o pulso para o Kernel processar a decisão
-   // 1. Processamento Lógico (Cérebro)
+   // 1. CÉREBRO: Processa Lógica de Mercado
    if(g_kernel != NULL) {
       g_kernel.OnTick();
    }
 
-   // 2. Processamento Visual (Olhos)
+   // 2. OLHOS: Atualiza Interface e Logs
    if(g_dashboard != NULL) {
       g_dashboard.Update();
+      
+      // Lógica Simples de Log Visual
+      if(PositionSelect(_Symbol)) {
+         long type = PositionGetInteger(POSITION_TYPE);
+         double profit = PositionGetDouble(POSITION_PROFIT);
+         string typeStr = (type == POSITION_TYPE_BUY) ? "COMPRADO" : "VENDIDO";
+         g_dashboard.Log(StringFormat("%s | Float: %.2f", typeStr, profit));
+      } 
+      else {
+         g_dashboard.Log("Monitorando Mercado (Cerberus)...");
+      }
+      
+      // --- FALLBACK (POLLING): Verifica manualmente o Botão de Pânico ---
+      if(ObjectGetInteger(0, "TheUltimateBot_Btn_Panic", OBJPROP_STATE) == 1) {
+         Print(">>> [POLLING UI] Panic Button Pressed!");
+         
+         ObjectSetInteger(0, "TheUltimateBot_Btn_Panic", OBJPROP_STATE, false);
+         ChartRedraw();
+         
+         if(g_dashboard != NULL) g_dashboard.Log("!!! PÂNICO (VIA POLLING) !!!");
+         
+         if(g_kernel != NULL) {
+             g_kernel.Panic();
+             Alert("!!! SYSTEM PANIC PROTECTED (POLLING) !!!");
+         }
+      }
+   }
+  }
+
+//+------------------------------------------------------------------+
+//| Chart Event function (INTERAÇÃO UI)                              |
+//+------------------------------------------------------------------+
+void OnChartEvent(const int id, const long &lparam, const double &dparam, const string &sparam)
+  {
+   // DEBUG BRUTO: Imprimir qualquer evento que não seja MouseMove (pra não floodar)
+   if(id != CHARTEVENT_MOUSE_MOVE) {
+      PrintFormat(">>> [EVENT] ID=%d | LParam=%d | DParam=%.2f | SParam='%s'", id, lparam, dparam, sparam);
+   }
+
+   // Detecta clique no Botão de Pânico
+   if(id == CHARTEVENT_OBJECT_CLICK) {
+       // DEBUG GLOBAL DE CLIQUES
+       PrintFormat(">>> [UI DEBUG] Click Event Detected! Object: '%s'", sparam);
+       
+       if(StringFind(sparam, "Panic") >= 0) {
+          Print(">>> [PANIC] CLICK CONFIRMED via StringFind match!");
+          
+          if(g_dashboard != NULL) g_dashboard.Log("!!! PÂNICO CONFIRMADO !!!");
+          
+          // Feedback visual: O botão volta ao estado normal (desapertado)
+          ObjectSetInteger(0, "TheUltimateBot_Btn_Panic", OBJPROP_STATE, false);
+          ChartRedraw();
+          
+          // Aciona o Kernel
+          if(g_kernel != NULL) {
+             g_kernel.Panic();
+             Alert("!!! SYSTEM PANIC PROTECTED !!! ALL POSITIONS CLOSED.");
+          }
+       }
    }
   }
 //+------------------------------------------------------------------+

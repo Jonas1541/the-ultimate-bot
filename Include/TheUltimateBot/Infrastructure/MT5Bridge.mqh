@@ -61,6 +61,16 @@ public:
       return success;
    }
    
+   // Fecha uma posição específica pelo Ticket
+   bool ClosePosition(ulong ticket) {
+      if(!m_trade.PositionClose(ticket)) {
+         PrintFormat("!!! ERRO AO FECHAR POSIÇÃO %d: %s", ticket, m_trade.ResultComment());
+         return false;
+      }
+      PrintFormat(">>> SUCESSO: Posição %d fechada.", ticket);
+      return true;
+   }
+   
    // Configurações extras
    void SetMagicNumber(ulong magic) {
       m_magicNumber = magic;
