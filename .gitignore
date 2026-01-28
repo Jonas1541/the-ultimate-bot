@@ -16,3 +16,6 @@
 # 4. IGNORE binários mesmo dentro das pastas permitidas
 *.ex5
 *.log
+
+# 5. Não ignore arquivos de configuração do Antigravity
+!/.agent
